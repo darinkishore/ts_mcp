@@ -7,12 +7,19 @@ import {
   CallToolRequestSchema,
   ErrorCode,
   McpError,
-  RequestHandlerExtra,
 } from "@modelcontextprotocol/sdk/types.js";
 import { ResearchService } from "./services/researchservice";
 import { db, initDb } from "./db";
 import { WordIdGenerator } from "./utils/word_id_generator";
 import * as schema from "./db/schema";
+import { BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
+import {
+  formatFullTextsResponse,
+  formatQueryResultsSummary,
+  formatResourceContent,
+  formatResultSummary,
+  wrapInResultsTag,
+} from "./utils/formatters";
 
 // Type for get_full_texts arguments
 interface GetFullTextsArgs {
@@ -63,80 +70,100 @@ class ResearchServer {
 
   private setupHandlers(): void {
     // Research endpoint
-    this.server.setRequestHandler(
-      CallToolRequestSchema,
-      async (request, extra: RequestHandlerExtra) => {
-        if (request.params.name !== "research") {
-          throw new McpError(
-            ErrorCode.MethodNotFound,
-            `Unknown tool: ${request.params.name}`
-          );
-        }
+    this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
+      if (request.params.name !== "research") {
+        throw new McpError(
+          ErrorCode.MethodNotFound,
+          `Unknown tool: ${request.params.name}`
+        );
+      }
 
-        if (
-          !request.params.arguments ||
-          typeof request.params.arguments !== "object"
-        ) {
-          throw new McpError(
-            ErrorCode.InvalidParams,
-            "Invalid research arguments"
-          );
-        }
+      if (
+        !request.params.arguments ||
+        typeof request.params.arguments !== "object"
+      ) {
+        throw new McpError(
+          ErrorCode.InvalidParams,
+          "Invalid research arguments"
+        );
+      }
 
-        const { purpose, question } = request.params.arguments as {
-          purpose?: string;
-          question?: string;
+      const { purpose, question } = request.params.arguments as {
+        purpose?: string;
+        question?: string;
+      };
+
+      if (
+        !purpose ||
+        !question ||
+        typeof purpose !== "string" ||
+        typeof question !== "string"
+      ) {
+        throw new McpError(
+          ErrorCode.InvalidParams,
+          "Missing required parameters: purpose and question"
+        );
+      }
+
+      try {
+        const results = await this.researchService.research(purpose, question);
+        return {
+          content: [
+            {
+              type: "text",
+              text: wrapInResultsTag(
+                results.queryResults
+                  .map(
+                    (qr) =>
+                      formatQueryResultsSummary(
+                        qr.query.text,
+                        qr.query.category,
+                        qr.query.livecrawl
+                      ) +
+                      "\n\n" +
+                      qr.summarizedResults
+                        .map((sr, i) =>
+                          formatResultSummary(
+                            qr.rawResults[i].id,
+                            qr.rawResults[i].title,
+                            qr.rawResults[i].author,
+                            sr.relevanceSummary,
+                            sr.denseSummary,
+                            qr.rawResults[i].publishedDate
+                              ? new Date(qr.rawResults[i].publishedDate)
+                              : null
+                          )
+                        )
+                        .join("\n\n")
+                  )
+                  .join("\n\n")
+              ),
+            },
+          ],
         };
-
-        if (
-          !purpose ||
-          !question ||
-          typeof purpose !== "string" ||
-          typeof question !== "string"
-        ) {
-          throw new McpError(
-            ErrorCode.InvalidParams,
-            "Missing required parameters: purpose and question"
-          );
-        }
-
-        try {
-          const results = await this.researchService.research(
-            purpose,
-            question
-          );
+      } catch (error) {
+        if (error instanceof Error) {
           return {
             content: [
               {
                 type: "text",
-                text: JSON.stringify(results, null, 2),
-              },
-            ],
-          };
-        } catch (error) {
-          if (error instanceof Error) {
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: `Research error: ${error.message}`,
-                },
-              ],
-              isError: true,
-            };
-          }
-          return {
-            content: [
-              {
-                type: "text",
-                text: "Research error: Unknown error occurred",
+                text: `Research error: ${error.message}`,
               },
             ],
             isError: true,
           };
         }
+        return {
+          content: [
+            {
+              type: "text",
+              text: "Research error: Unknown error occurred",
+            },
+          ],
+          isError: true,
+        };
       }
-    );
+    });
 
     // List resources endpoint
     this.server.setRequestHandler(ListResourcesRequestSchema, async () => {
@@ -172,7 +199,13 @@ class ResearchServer {
               {
                 uri,
                 mimeType: "application/json",
-                text: JSON.stringify(result, null, 2),
+                text: formatResourceContent(
+                  result.id,
+                  result.title,
+                  result.author,
+                  result.text,
+                  result.publishedDate
+                ),
               },
             ],
           };
@@ -225,65 +258,70 @@ class ResearchServer {
     }));
 
     // Get full texts tool
-    this.server.setRequestHandler(
-      CallToolRequestSchema,
-      async (request, extra: RequestHandlerExtra) => {
-        if (request.params.name !== "get_full_texts") {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "Unknown tool",
-              },
-            ],
-            isError: true,
-          };
-        }
-
-        const args = request.params.arguments as GetFullTextsArgs | undefined;
-        if (!args?.result_ids || !Array.isArray(args.result_ids)) {
-          throw new McpError(
-            ErrorCode.InvalidParams,
-            "result_ids must be an array"
-          );
-        }
-
-        try {
-          const results = await this.researchService.getFullTexts(
-            args.result_ids
-          );
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(results, null, 2),
-              },
-            ],
-          };
-        } catch (error) {
-          if (error instanceof Error) {
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: `Error fetching full texts: ${error.message}`,
-                },
-              ],
-              isError: true,
-            };
-          }
-          return {
-            content: [
-              {
-                type: "text",
-                text: "Error fetching full texts: Unknown error occurred",
-              },
-            ],
-            isError: true,
-          };
-        }
+    this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
+      if (request.params.name !== "get_full_texts") {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "Unknown tool",
+            },
+          ],
+          isError: true,
+        };
       }
-    );
+
+      const args = request.params.arguments as GetFullTextsArgs | undefined;
+      if (!args?.result_ids || !Array.isArray(args.result_ids)) {
+        throw new McpError(
+          ErrorCode.InvalidParams,
+          "result_ids must be an array"
+        );
+      }
+
+      try {
+        const results = await this.researchService.getFullTexts(
+          args.result_ids
+        );
+        return {
+          content: [
+            {
+              type: "text",
+              text: formatFullTextsResponse(
+                results.map((r) => ({
+                  id: r.id,
+                  title: r.title,
+                  author: r.author,
+                  published_date: r.publishedDate,
+                  content: r.text,
+                }))
+              ),
+            },
+          ],
+        };
+      } catch (error) {
+        if (error instanceof Error) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Error fetching full texts: ${error.message}`,
+              },
+            ],
+            isError: true,
+          };
+        }
+        return {
+          content: [
+            {
+              type: "text",
+              text: "Error fetching full texts: Unknown error occurred",
+            },
+          ],
+          isError: true,
+        };
+      }
+    });
   }
 
   async run(): Promise<void> {
