@@ -20,8 +20,12 @@ export const results = sqliteTable("results", {
   queryPurpose: text("query_purpose").notNull(),
   queryQuestion: text("query_question").notNull(),
   publishedDate: text("published_date"),
-  createdAt: integer("created_at").default(sql`CURRENT_TIMESTAMP`),
-  updatedAt: integer("updated_at").default(sql`CURRENT_TIMESTAMP`),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`CURRENT_TIMESTAMP`),
 });
 
 export const exaQueries = sqliteTable("exa_queries", {
@@ -29,7 +33,9 @@ export const exaQueries = sqliteTable("exa_queries", {
   queryText: text("query_text").notNull(),
   category: text("category"),
   livecrawl: integer("livecrawl", { mode: "boolean" }).notNull().default(false),
-  createdAt: integer("created_at").default(sql`CURRENT_TIMESTAMP`),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`CURRENT_TIMESTAMP`),
 });
 
 export const queryResults = sqliteTable(
@@ -48,3 +54,5 @@ export type Result = typeof results.$inferSelect;
 export type NewResult = typeof results.$inferInsert;
 export type ExaQuery = typeof exaQueries.$inferSelect;
 export type NewExaQuery = typeof exaQueries.$inferInsert;
+export type QueryResult = typeof queryResults.$inferSelect;
+export type NewQueryResult = typeof queryResults.$inferInsert;

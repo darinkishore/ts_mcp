@@ -1,19 +1,17 @@
 {
   "compilerOptions": {
-    "target": "ES2022",
+    "target": "ESNext",
     "module": "ESNext",
-    "moduleResolution": "node",
+    "moduleResolution": "bundler",
     "outDir": "./build",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "types": ["bun-types"],
-    "noEmit": true,
     "allowImportingTsExtensions": true,
-    "resolveJsonModule": true,
-    "allowJs": true
+    "noEmit": true
   },
-  "include": ["src/**/*", "drizzle/**/*"],
+  "include": ["src/**/*"],
   "exclude": ["node_modules"]
 }
